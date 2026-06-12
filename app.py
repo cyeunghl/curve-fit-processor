@@ -7,7 +7,12 @@ import io
 import pandas as pd
 import streamlit as st
 
-from processing.aggregate import build_ratio_table, default_geomean_cell_lines
+from processing.aggregate import (
+    aggregate_column_name,
+    build_ratio_table,
+    default_geomean_cell_lines,
+    ratio_sum_column_name,
+)
 from processing.constants import CHEMSLUDGE_COL
 from processing.parse import cell_line_tissue_map, ingest_tsv, list_cell_lines, list_measurements
 from processing.transform import EC_IC_MEASUREMENTS, apply_transformations, pivot_measurement
@@ -44,7 +49,7 @@ cell_lines = list_cell_lines(transformed)
 measurements = list_measurements(transformed)
 tissue_map = cell_line_tissue_map(long_df)
 
-preferred = ["EC50", "EC90", "IC50", "Span", "aAUC", "pAUC"]
+preferred = ["pAUC", "EC50", "IC50", "Span", "aAUC"]
 measurement_options = [m for m in preferred if m in measurements]
 measurement_options.extend(m for m in measurements if m not in measurement_options)
 
@@ -77,13 +82,15 @@ with tab_configure:
     selected_measurements = st.multiselect(
         "Select one or more measurements",
         measurement_options,
-        default=[m for m in ["EC50", "EC90", "IC50"] if m in measurement_options] or measurement_options[:1],
+        default=[m for m in ["pAUC"] if m in measurement_options] or measurement_options[:1],
         label_visibility="collapsed",
     )
 
     st.markdown('<p class="section-label">Cell lines for geomean</p>', unsafe_allow_html=True)
     st.markdown(
-        annotation_card("HEKALOT9253 and HEPATOCYTE are unchecked by default. Heatmaps show proliferation lines unless toggled."),
+        annotation_card(
+            "Unchecked by default: HEKALOT9253, HEPATOCYTE, KPL4_ABCB1_OE, HT1376_ABCG2_KO."
+        ),
         unsafe_allow_html=True,
     )
 
@@ -96,6 +103,20 @@ with tab_configure:
                 selected_cell_lines.append(cell_line)
 
     heatmap_cell_lines = selected_cell_lines or default_selected
+
+    st.markdown('<p class="section-label">Ratio sum</p>', unsafe_allow_html=True)
+    show_ratio_sum = st.checkbox(
+        "Show ratio sum column in results",
+        value=True,
+        help="EC/IC: sum of log₂(HEK / aggregate) + log₂(HEPATOCYTE / aggregate). "
+        "pAUC/aAUC: sum of raw HEK + HEPATOCYTE ratios.",
+    )
+    st.markdown(
+        annotation_card(
+            "Sum uses log₂ ratios for EC50, EC90, IC50; raw ratios for pAUC and aAUC."
+        ),
+        unsafe_allow_html=True,
+    )
 
     if not selected_measurements:
         st.warning("Select at least one measurement.")
@@ -130,19 +151,28 @@ with tab_results:
 
         wide_display, wide_raw = pivot_measurement(transformed, measurement)
         ratio_table = build_ratio_table(
-            wide_display, wide_raw, selected_cell_lines, measurement
+            wide_display,
+            wide_raw,
+            selected_cell_lines,
+            measurement,
+            include_ratio_sum=show_ratio_sum,
         )
 
-        primary_cols = [CHEMSLUDGE_COL, "geomean"]
+        agg_col = aggregate_column_name(measurement)
+        primary_cols = [CHEMSLUDGE_COL, agg_col]
         for label in ("HEKALOT9253", "HEPATOCYTE"):
             suffix = "_nM" if measurement in EC_IC_MEASUREMENTS else ""
             primary_cols.extend([
                 f"{label}{suffix}",
-                f"{label} / geomean",
-                f"log2({label} / geomean)",
+                f"{label} / {agg_col}",
+                f"log2({label} / {agg_col})",
             ])
             if measurement in EC_IC_MEASUREMENTS:
                 primary_cols.append(f"{label}_raw_M")
+
+        sum_col = ratio_sum_column_name(measurement)
+        if show_ratio_sum and sum_col:
+            primary_cols.append(sum_col)
 
         primary_cols = [c for c in primary_cols if c in ratio_table.columns]
         st.dataframe(

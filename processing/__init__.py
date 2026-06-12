@@ -1,4 +1,10 @@
-from processing.aggregate import build_ratio_table, compute_geomean_wide
+from processing.aggregate import (
+    aggregate_column_name,
+    add_ratio_sum_column,
+    build_ratio_table,
+    compute_geomean_wide,
+    ratio_sum_column_name,
+)
 from processing.constants import (
     CHEMSLUDGE_COL,
     DEFAULT_EXCLUDED_FROM_GEOMEAN,
@@ -18,6 +24,9 @@ __all__ = [
     "list_measurements",
     "apply_transformations",
     "pivot_measurement",
+    "aggregate_column_name",
+    "add_ratio_sum_column",
     "compute_geomean_wide",
+    "ratio_sum_column_name",
     "build_ratio_table",
 ]
