@@ -10,9 +10,11 @@ import pytest
 from scipy.stats import gmean
 
 from processing.aggregate import (
+    aggregate_column_name,
     build_ratio_table,
     compute_geomean_wide,
     default_geomean_cell_lines,
+    ratio_sum_column_name,
 )
 from processing.constants import CHEMSLUDGE_COL, HEK_CELL_LINE
 from processing.parse import cell_line_tissue_map, ingest_tsv, list_cell_lines, list_measurements
@@ -88,6 +90,8 @@ def test_default_geomean_excludes_hek_and_hepatocyte(pipeline_data):
 
     assert HEK_CELL_LINE not in default
     assert "HEPATOCYTES_HUMAN_LOT_240604" not in default
+    assert "KPL4_ABCB1_OE" not in default
+    assert "HT1376_ABCG2_KO" not in default
     assert "CALU6" in default
     assert "KPL4" in default
 
@@ -120,20 +124,59 @@ def test_ratio_table_has_expected_columns(pipeline_data):
     )
 
 
+def test_ec50_ratio_sum_uses_log2(pipeline_data):
+    _, transformed = pipeline_data
+    selected = default_geomean_cell_lines(list_cell_lines(transformed))
+    wide_display, wide_raw = pivot_measurement(transformed, "EC50")
+    ratio_table = build_ratio_table(
+        wide_display, wide_raw, selected, "EC50", include_ratio_sum=True
+    )
+
+    assert ratio_sum_column_name("EC50") == "sum log2 ratios"
+    row = ratio_table[ratio_table[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
+    expected = row["log2(HEKALOT9253 / geomean)"] + row["log2(HEPATOCYTE / geomean)"]
+    assert row["sum log2 ratios"] == pytest.approx(expected)
+
+
+def test_pauc_ratio_sum_uses_raw_ratios(pipeline_data):
+    _, transformed = pipeline_data
+    selected = default_geomean_cell_lines(list_cell_lines(transformed))
+    wide_display, wide_raw = pivot_measurement(transformed, "pAUC")
+    ratio_table = build_ratio_table(
+        wide_display, wide_raw, selected, "pAUC", include_ratio_sum=True
+    )
+
+    assert ratio_sum_column_name("pAUC") == "sum ratios"
+    row = ratio_table[ratio_table[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
+    expected = row["HEKALOT9253 / mean"] + row["HEPATOCYTE / mean"]
+    assert row["sum ratios"] == pytest.approx(expected)
+
+
 def test_pauc_uses_arithmetic_mean(pipeline_data):
     _, transformed = pipeline_data
     cell_lines = list_cell_lines(transformed)
     selected = default_geomean_cell_lines(cell_lines)
 
     wide_display, wide_raw = pivot_measurement(transformed, "pAUC")
-    row = wide_display[wide_display[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
+    ratio_table = build_ratio_table(wide_display, wide_raw, selected, "pAUC")
 
+    assert aggregate_column_name("pAUC") == "mean"
+    assert "mean" in ratio_table.columns
+    assert "HEKALOT9253 / mean" in ratio_table.columns
+    assert "log2(HEPATOCYTE / mean)" in ratio_table.columns
+    assert "geomean" not in ratio_table.columns
+
+    row = wide_display[wide_display[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
     values = [float(row[cl]) for cl in selected if cl in wide_display.columns]
     expected_mean = float(np.mean(values))
 
     aggregate = compute_geomean_wide(wide_display, selected, "pAUC")
+    assert aggregate.name == "mean"
     hb48711_idx = wide_display[wide_display[CHEMSLUDGE_COL] == "HB-48711"].index[0]
     assert aggregate.loc[hb48711_idx] == pytest.approx(expected_mean)
+
+    hb48711 = ratio_table[ratio_table[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
+    assert hb48711["mean"] == pytest.approx(expected_mean)
 
     # geomean would differ from arithmetic mean for this compound
     assert float(gmean(values)) != pytest.approx(expected_mean)
