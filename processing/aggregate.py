@@ -14,30 +14,40 @@ from processing.constants import (
 )
 from processing.transform import EC_IC_MEASUREMENTS
 
+ARITHMETIC_MEAN_MEASUREMENTS = frozenset({"pAUC"})
+
 
 def default_geomean_cell_lines(all_cell_lines: list[str]) -> list[str]:
     return [cl for cl in all_cell_lines if cl not in DEFAULT_EXCLUDED_FROM_GEOMEAN]
 
 
 def compute_geomean_wide(
-    wide_display: pd.DataFrame, selected_cell_lines: list[str]
+    wide_display: pd.DataFrame,
+    selected_cell_lines: list[str],
+    measurement: str | None = None,
 ) -> pd.Series:
-    """Compute row-wise geomean across selected cell line columns."""
+    """Compute row-wise aggregate across selected cell line columns.
+
+    Uses arithmetic mean for pAUC; geometric mean for all other measurements.
+    """
     available = [cl for cl in selected_cell_lines if cl in wide_display.columns]
     if not available:
         return pd.Series(np.nan, index=wide_display.index, name="geomean")
 
     values = wide_display[available].astype(float)
+    use_arithmetic = measurement in ARITHMETIC_MEAN_MEASUREMENTS
 
-    def row_geomean(row: pd.Series) -> float:
+    def row_aggregate(row: pd.Series) -> float:
         valid = row.dropna()
         if valid.empty:
             return np.nan
+        if use_arithmetic:
+            return float(valid.mean())
         if (valid <= 0).any():
             return np.nan
         return float(gmean(valid))
 
-    return values.apply(row_geomean, axis=1).rename("geomean")
+    return values.apply(row_aggregate, axis=1).rename("geomean")
 
 
 def build_ratio_table(
@@ -47,7 +57,7 @@ def build_ratio_table(
     measurement: str,
 ) -> pd.DataFrame:
     """Build final ratio table with HEK/HEPATOCYTE values and geomean ratios."""
-    geomean = compute_geomean_wide(wide_display, selected_cell_lines)
+    geomean = compute_geomean_wide(wide_display, selected_cell_lines, measurement)
 
     result = pd.DataFrame({CHEMSLUDGE_COL: wide_display[CHEMSLUDGE_COL], "geomean": geomean})
 

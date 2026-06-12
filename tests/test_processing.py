@@ -7,8 +7,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.stats import gmean
 
-from processing.aggregate import build_ratio_table, default_geomean_cell_lines
+from processing.aggregate import (
+    build_ratio_table,
+    compute_geomean_wide,
+    default_geomean_cell_lines,
+)
 from processing.constants import CHEMSLUDGE_COL, HEK_CELL_LINE
 from processing.parse import cell_line_tissue_map, ingest_tsv, list_cell_lines, list_measurements
 from processing.transform import (
@@ -113,6 +118,25 @@ def test_ratio_table_has_expected_columns(pipeline_data):
     assert hb48711["log2(HEKALOT9253 / geomean)"] == pytest.approx(
         np.log2(hb48711["HEKALOT9253 / geomean"])
     )
+
+
+def test_pauc_uses_arithmetic_mean(pipeline_data):
+    _, transformed = pipeline_data
+    cell_lines = list_cell_lines(transformed)
+    selected = default_geomean_cell_lines(cell_lines)
+
+    wide_display, wide_raw = pivot_measurement(transformed, "pAUC")
+    row = wide_display[wide_display[CHEMSLUDGE_COL] == "HB-48711"].iloc[0]
+
+    values = [float(row[cl]) for cl in selected if cl in wide_display.columns]
+    expected_mean = float(np.mean(values))
+
+    aggregate = compute_geomean_wide(wide_display, selected, "pAUC")
+    hb48711_idx = wide_display[wide_display[CHEMSLUDGE_COL] == "HB-48711"].index[0]
+    assert aggregate.loc[hb48711_idx] == pytest.approx(expected_mean)
+
+    # geomean would differ from arithmetic mean for this compound
+    assert float(gmean(values)) != pytest.approx(expected_mean)
 
 
 def test_cell_line_tissue_map(pipeline_data):
